@@ -22,6 +22,7 @@ const bot = mineflayer.createBot({
 
 function getState(bot, opponent) {
   // Extract relevant information
+  if (!opponent.entity) return;
   const targHealth = opponent.health || 0;
   const targDist = bot.entity.position.distanceTo(opponent.entity.position);
 
