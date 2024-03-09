@@ -68,14 +68,22 @@ bot.on("physicTick", () => {
 });
 
 
+let cachedState = null;
+
 function getState(bot, opponent) {
+  // Check if the state needs to be updated
+  if (cachedState && !stateNeedsUpdate(bot, opponent)) {
+    return cachedState;
+  }
+
   if (!opponent.entity) return;
   const { health: targHealth = 0, entity: { position } } = opponent;
   const { position: botPosition, health: botHealth, heldItem: { name: weapon } = {} } = bot.entity;
   const targDist = botPosition.distanceTo(position);
   const direction = botPosition.directionTo(position);
 
-  return {
+  // Update the cached state
+  cachedState = {
     targHealth,
     targDist,
     botPos: botPosition,
@@ -83,16 +91,58 @@ function getState(bot, opponent) {
     weapon,
     direction
   };
+
+  return cachedState;
+}
+
+function stateNeedsUpdate(bot, opponent) {
+  // Check if the opponent's position has changed
+  if (!cachedState || bot.entity.position.distanceTo(opponent.entity.position) > 1) {
+    return true;
+  }
+
+  // Check if the bot's position has changed
+  if (bot.entity.position.distanceTo(cachedState.botPos) > 1) {
+    return true;
+  }
+
+  // Check if the bot's health has changed
+  if (bot.entity.health !== cachedState.botHealth) {
+    return true;
+  }
+
+  // Check if the opponent's health has changed
+  if (opponent.health !== cachedState.targHealth) {
+    return true;
+  }
+
+  // Check if the bot's weapon has changed
+  if (bot.entity.heldItem && bot.entity.heldItem.name !== cachedState.weapon) {
+    return true;
+  }
+
+  // If none of the above conditions are met, the state does not need to be updated
+  return false;
 }
 
 function updateQValues(state, action, reward, nextState) {
-  if (!qTable[state]) qTable[state] = { attack: 0, forward: 0 };
-  if (!qTable[nextState]) qTable[nextState] = { attack: 0, forward: 0 };
+  if (!qTable[state]) qTable[state] = null;
+  if (!qTable[nextState]) qTable[nextState] = null;
 
-  const currentQValue = qTable[state][action];
-  const maxNextQValue = Math.max(...Object.values(qTable[nextState]));
+  const currentQValue = qTable[state] && qTable[state][action] ? qTable[state][action] : 0;
+
+  let maxNextQValue = 0;
+  if (qTable[nextState]) {
+    for (let [nextAction, nextQValue] of Object.entries(qTable[nextState])) {
+      if (nextQValue > maxNextQValue) {
+        maxNextQValue = nextQValue;
+      }
+    }
+  }
 
   const newQValue = currentQValue + learningRate * (reward + discountFactor * maxNextQValue - currentQValue);
+
+  if (!qTable[state]) qTable[state] = {};
   qTable[state][action] = newQValue;
 }
 
@@ -101,7 +151,9 @@ function chooseAction(state) {
     const actions = Object.values(actionList);
     return actions[Math.floor(Math.random() * actions.length)];
   } else {
-    return Object.keys(qTable[state]).reduce((a, b) => qTable[state][a] > qTable[state][b] ? a : b);
+    const actions = Object.entries(qTable[state]);
+    actions.sort((a, b) => b[1] - a[1]);
+    return actions[0][0];
   }
 }
 
