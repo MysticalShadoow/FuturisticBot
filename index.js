@@ -9,7 +9,8 @@ const actionList = {
     forward: "forward",
     back: "back",
     left: "left",
-    right: "right"
+    right: "right",
+    jump: "jump"
   }
 };
 
@@ -24,6 +25,7 @@ const qTable = {};
 const learningRate = 0.1;
 const discountFactor = 0.9;
 const explorationRate = 0.1;
+const botReach = 3;
 
 bot.on("spawn", () => {
   console.log("Bot spawned in");
@@ -65,26 +67,22 @@ bot.on("physicTick", () => {
   }
 });
 
+
 function getState(bot, opponent) {
   if (!opponent.entity) return;
   const { health: targHealth = 0, entity: { position } } = opponent;
-  const { position: botPosition, health: botHealth } = bot.entity;
+  const { position: botPosition, health: botHealth, heldItem: { name: weapon } = {} } = bot.entity;
   const targDist = botPosition.distanceTo(position);
+  const direction = botPosition.directionTo(position);
 
   return {
     targHealth,
     targDist,
     botPos: botPosition,
     botHealth,
+    weapon,
+    direction
   };
-}
-
-function chooseAction(state) {
-  if (Math.random() < explorationRate || !qTable[state]) {
-    return Math.random() < 0.5 ? actionList.attack : actionList.move.forward;
-  } else {
-    return qTable[state][actionList.attack] > qTable[state][actionList.move.forward] ? actionList.attack : actionList.move.forward;
-  }
 }
 
 function updateQValues(state, action, reward, nextState) {
@@ -98,13 +96,59 @@ function updateQValues(state, action, reward, nextState) {
   qTable[state][action] = newQValue;
 }
 
+function chooseAction(state) {
+  if (Math.random() < explorationRate || !qTable[state]) {
+    const actions = Object.values(actionList);
+    return actions[Math.floor(Math.random() * actions.length)];
+  } else {
+    return Object.keys(qTable[state]).reduce((a, b) => qTable[state][a] > qTable[state][b] ? a : b);
+  }
+}
+
 function performAction(bot, action, target) {
-  if (action === actionList.attack) {
-    bot.lookAt(target.position);
-    bot.attack(target);
-  } else if (action === actionList.move.forward) {
-    bot.setControlState("forward", true);
+  const currentWeapon = bot.heldItem?.name;
+
+  switch (action) {
+    case actionList.attack:
+      bot.lookAt(target.position.offset(0, 0.5, 0));
+      if (bot.entity.position.distanceTo(target.position) <= botReach) {
+        setTimeout(() => {
+          bot.attack(target);
+        }, config.combat.cooldowns[currentWeapon] * 1000);
+      } else {
+        bot.setControlState("forward", true);
+      }
+      break;
+    case actionList.move.forward:
+      bot.setControlState("forward", true);
+      break;
+    case actionList.move.back:
+      bot.setControlState("back", true);
+      break;
+    case actionList.move.left:
+      bot.setControlState("left", true);
+      break;
+    case actionList.move.right:
+      bot.setControlState("right", true);
+      break;
+    case actionList.move.jump:
+      bot.setControlState("jump", true);
+      break;
   }
 
   return Math.random() > 0.5 ? 1 : -1;
 }
+
+bot.on("physicTick", () => {
+  if (!spawned) return;
+  const target = bot.nearestEntity(entity => entity.type.toLowerCase() === "player");
+
+  if (target) {
+    const currentState = getState(bot, target);
+    const action = chooseAction(currentState);
+    const reward = performAction(bot, action, target);
+    const nextState = getState(bot, target);
+
+    updateQValues(currentState, action, reward, nextState);
+  }
+});
